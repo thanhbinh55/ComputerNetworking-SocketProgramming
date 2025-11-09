@@ -1,0 +1,15 @@
+{
+  "name": "mmt-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for MMT project",
+  "main": "test.js",
+  "type": "module",
+  "scripts": {
+    "start": "node test.js"
+  },
+  "dependencies": {
+    "rxjs": "^7.8.0",
+    "rxjs-websockets": "^1.0.0",
+    "ws": "^8.18.3"
+  }
+}
