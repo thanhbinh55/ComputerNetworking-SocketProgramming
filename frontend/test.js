@@ -1,70 +1,70 @@
 // test.js
 import { webSocket } from 'rxjs/webSocket';
-import { timer, take, finalize } from 'rxjs'; 
+import { timer, take, finalize, retryWhen, delay } from 'rxjs';
+import { WebSocket } from 'ws';  // thu vien WebSocket cho Node.js
 
-// Import thư viện WebSocket cho Node.js (ws)
-import { WebSocket } from 'ws'; 
+const WS_URL = 'ws://127.0.0.1:9001';
+console.log(`Dang co gang ket noi toi ${WS_URL} bang RxJS...`);
 
-const WS_URL = 'ws://127.0.0.1:8080';
-console.log(`Đang cố gắng kết nối tới ${WS_URL} bằng RxJS...`);
+// Ham lay thoi gian hien tai
+function now() {
+    return new Date().toLocaleTimeString();
+}
 
-// 1. Tạo WebSocketSubject
-// *** Tối quan trọng: Cấu hình WebSocketCtor để dùng thư viện 'ws' ***
-const subject = webSocket({
-    url: WS_URL,
-    // Cung cấp Constructor của WebSocket từ thư viện 'ws'
-    WebSocketCtor: WebSocket,
-    deserializer: (messageEvent) => {
-        return messageEvent.data;
-    },
+// 1. Tao WebSocketSubject voi cau hinh chi tiet
+function createWebSocket() {
+    const subject = webSocket({
+        url: WS_URL,
+        WebSocketCtor: WebSocket,
+        deserializer: (msg) => msg.data,
 
-    // Theo dõi kết nối thành công
-    openObserver: {
-        next: () => {
-            console.log('\n✅ RxJS: Kết nối WebSocket đã thiết lập thành công!');
+        openObserver: {
+            next: () => {
+                console.log(`[${now()}] Ket noi WebSocket thanh cong`);
+            }
+        },
+        closeObserver: {
+            next: (event) => {
+                console.log(`[${now()}] Ket noi da dong. Ma: ${event.code}`);
+            }
+        },
+        closingObserver: {
+            next: () => {
+                console.log(`[${now()}] Dang dong ket noi...`);
+            }
         }
-    },
-    // Theo dõi đóng kết nối
-    closeObserver: {
-        next: (event) => {
-            console.log(`\n❌ RxJS: Kết nối đã đóng. Code: ${event.code}`);
+    });
+
+    // 2. Dang ky nhan du lieu
+    subject.pipe(
+        retryWhen(errors => errors.pipe(
+            delay(3000) // thu lai sau 3 giay neu mat ket noi
+        ))
+    ).subscribe({
+        next: (msg) => {
+            console.log(`[${now()}] Nhan du lieu: ${msg}`);
+        },
+        error: (err) => {
+            console.error(`[${now()}] Loi ket noi:`, err);
+        },
+        complete: () => {
+            console.log(`[${now()}] Luong du lieu hoan tat.`);
         }
-    },
-    // Theo dõi lỗi
-    closingObserver: {
-        next: () => {
-             console.log('...Đang trong quá trình đóng kết nối...');
-        }
-    }
-});
+    });
 
-// 2. Nhận dữ liệu (Subscribe)
-subject.subscribe({
-    next: (msg) => {
-        console.log('📬 RxJS Nhận Dữ Liệu:', msg);
-    },
-    error: (err) => {
-        console.error('⚠️ Lỗi Kết Nối RxJS:', err);
-    },
-    complete: () => {
-        console.log('🛑 RxJS: Luồng dữ liệu hoàn tất.');
-    }
-});
+    // 3. Gui du lieu theo chu ky (5 lan moi giay)
+    timer(0, 1000).pipe(
+        take(5),
+        finalize(() => {
+            console.log(`[${now()}] Hoan tat chu ky gui, dong ket noi`);
+            subject.complete();
+        })
+    ).subscribe(i => {
+        const message = JSON.stringify({ command: "DATA", index: i + 1, time: now() });
+        console.log(`[${now()}] Gui du lieu: ${message}`);
+        subject.next(message);
+    });
+}
 
-
-// 3. Gửi dữ liệu theo chu kỳ (Mô phỏng giao tiếp)
-// Gửi 5 tin nhắn mỗi giây, sau đó đóng kết nối
-timer(0, 1000).pipe(
-    take(5), // Chỉ gửi 5 lần
-    // finalize được gọi khi luồng hoàn tất
-    finalize(() => {
-        console.log('--- Hoàn tất chu kỳ gửi tin, đóng kết nối ---');
-        subject.complete(); // Đóng kết nối WebSocket
-    })
-).subscribe(i => {
-    const message = `{"command": "DATA", "index": ${i + 1}}`;
-    console.log(`➡️ RxJS Gửi Dữ Liệu: ${message}`);
-    
-    // Gửi tin nhắn
-    subject.next(message);
-});
+// Goi ham tao ket noi lan dau
+createWebSocket();

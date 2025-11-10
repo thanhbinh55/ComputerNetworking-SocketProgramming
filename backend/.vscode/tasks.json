@@ -1,0 +1,24 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build (MSVC, all *.cpp in root)",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "VCPKG_ROOT": "C:/Users/binh/vcpkg" },
+        "shell": { "executable": "cmd.exe", "args": ["/d", "/c"] }
+      },
+      "command": "call \"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\Tools\\VsDevCmd.bat\" -arch=x64 && cl /nologo /EHsc /std:c++17 *.cpp /I \"%VCPKG_ROOT%\\installed\\x64-windows\\include\" /Fe:server.exe /link /LIBPATH:\"%VCPKG_ROOT%\\installed\\x64-windows\\lib\" ws2_32.lib",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Run Server",
+      "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": ".\\server.exe",
+      "dependsOn": "Build (MSVC, all *.cpp in root)"
+    }
+  ]
+}

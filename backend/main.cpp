@@ -1,89 +1,106 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/signal_set.hpp>
 #include <iostream>
 #include <string>
+#include <mutex>
+#include <chrono>
+#include <ctime>
+#include <windows.h>
 
-namespace beast = boost::beast;         // Thư viện cơ sở
-namespace http = beast::http;           // Hỗ trợ HTTP (cho Handshake)
-namespace websocket = beast::websocket; // Hỗ trợ WebSocket
-namespace net = boost::asio;            // Hỗ trợ mạng (IO)
-using tcp = boost::asio::ip::tcp;       // TCP sockets
+namespace beast = boost::beast;
+namespace http = beast::http;
+namespace websocket = beast::websocket;
+namespace net = boost::asio;
+using tcp = net::ip::tcp;
 
-// Hàm xử lý phiên WebSocket
-void do_session(tcp::socket& socket) {
+std::mutex cout_mutex; // khoa de in ra console an toan giua cac luong
+
+// Ham tra ve thoi gian hien tai (dang chuoi)
+std::string timestamp() {
+    auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::localtime(&now));
+    return std::string(buf);
+}
+
+// Ham xu ly mot phien WebSocket
+void do_session(tcp::socket socket) {
     try {
-        // Khởi tạo luồng WebSocket
+        auto remote_ep = socket.remote_endpoint();
+        {
+            std::lock_guard<std::mutex> lock(cout_mutex);
+            std::cout << "Client ket noi tu: " << remote_ep.address().to_string()
+                      << ":" << remote_ep.port() << std::endl;
+        }
+
         websocket::stream<tcp::socket> ws{std::move(socket)};
+        ws.set_option(websocket::stream_base::decorator([](websocket::response_type& res) {
+            res.set(http::field::server, "Boost.Beast C++ WebSocket Server");
+        }));
 
-        // Thiết lập các tùy chọn (tùy chọn)
-        ws.set_option(websocket::stream_base::decorator(
-            [](websocket::response_type& res) {
-                res.set(http::field::server, "Boost.Beast WebSocket Server");
-            }));
-
-        // ********** Nâng cấp Kết nối (Handshake) **********
-        // Đọc yêu cầu HTTP đầu tiên từ client
         beast::flat_buffer buffer;
         http::request<http::string_body> req;
         http::read(ws.next_layer(), buffer, req);
-
-        // Chấp nhận (Accept) yêu cầu nâng cấp kết nối thành WebSocket
         ws.accept(req);
-        std::cout << "✅ WebSocket Handshake thành công. Bắt đầu giao tiếp.\n";
 
-        // ********** Luồng Giao tiếp WebSocket **********
+        std::cout << "[" << timestamp() << "] Handshake thanh cong." << std::endl;
+
         while (true) {
-            beast::flat_buffer buffer_in;
-            
-            // Đọc tin nhắn từ client
-            ws.read(buffer_in);
-            
-            // Chuyển đổi dữ liệu sang dạng chuỗi (string_view)
-            std::string received_msg = beast::buffers_to_string(buffer_in.data());
-            std::cout << "✉️ Nhận từ Client: " << received_msg << "\n";
-            
-            // Xây dựng tin nhắn phản hồi
-            std::string reply_msg = "Server đã nhận: " + received_msg;
-            reply_msg = "{\"status\": \"OK\", \"message\": \"" + reply_msg + "\"}";
+            beast::flat_buffer msg_buffer;
+            ws.read(msg_buffer);
+            std::string msg = beast::buffers_to_string(msg_buffer.data());
 
-            // Gửi tin nhắn phản hồi lại client
-            ws.write(net::buffer(reply_msg));
-            std::cout << "➡️ Phản hồi tới Client: " << reply_msg << "\n";
+            {
+                std::lock_guard<std::mutex> lock(cout_mutex);
+                std::cout << "[" << timestamp() << "] Nhan: " << msg << std::endl;
+            }
+
+            std::string reply = "{\"time\": \"" + timestamp() +
+                                "\", \"status\": \"OK\", \"echo\": \"" + msg + "\"}";
+            ws.text(true);
+            ws.write(net::buffer(reply));
+
+            {
+                std::lock_guard<std::mutex> lock(cout_mutex);
+                std::cout << "[" << timestamp() << "] Gui lai: " << reply << std::endl;
+            }
         }
-    } catch(beast::system_error const& se) {
-        // Xử lý lỗi hệ thống (ví dụ: kết nối bị đóng)
-        if(se.code() != websocket::error::closed) {
-            std::cerr << "Lỗi Beast: " << se.code().message() << std::endl;
-        } else {
-            std::cout << "❌ Kết nối WebSocket đã đóng.\n";
-        }
-    } catch(std::exception const& e) {
-        std::cerr << "Lỗi: " << e.what() << std::endl;
+    } catch (const beast::system_error& se) {
+        if (se.code() != websocket::error::closed)
+            std::cerr << "Loi Beast: " << se.code().message() << std::endl;
+        else
+            std::cout << "Ket noi bi dong." << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Loi: " << e.what() << std::endl;
     }
 }
 
 int main() {
-    auto const address = net::ip::make_address("127.0.0.1"); // Lắng nghe trên localhost
-    unsigned short const port = 8080;
-
     try {
-        net::io_context ioc{1}; // Đối tượng IO Context
+        SetConsoleOutputCP(CP_UTF8);
+        unsigned short port = 9001;
+        auto address = net::ip::make_address("127.0.0.1");
+        net::io_context ioc{1};
 
-        // Bộ chấp nhận kết nối (Acceptor)
         tcp::acceptor acceptor{ioc, {address, port}};
-        std::cout << "🚀 Server C++ đang lắng nghe tại ws://127.0.0.1:" << port << "\n";
+        std::cout << "Server dang lang nghe tai ws://127.0.0.1:" << port << std::endl;
+
+        // Xu ly Ctrl+C de tat server an toan
+        net::signal_set signals(ioc, SIGINT, SIGTERM);
+        signals.async_wait([&](auto, auto) {
+            std::cout << "\nServer dang tat..." << std::endl;
+            ioc.stop();
+        });
 
         while (true) {
             tcp::socket socket{ioc};
-            // Chờ và chấp nhận kết nối mới
             acceptor.accept(socket);
-
-            // Bắt đầu một phiên mới trong một luồng riêng (hoặc đơn giản là đồng bộ cho ví dụ này)
-            do_session(socket);
+            std::thread(&do_session, std::move(socket)).detach();
         }
     } catch (const std::exception& e) {
-        std::cerr << "Lỗi Server: " << e.what() << std::endl;
+        std::cerr << "Loi server: " << e.what() << std::endl;
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;
